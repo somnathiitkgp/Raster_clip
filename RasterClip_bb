@@ -1,0 +1,57 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Tue Feb 18 12:14:51 2025
+
+@author: sp1v23
+"""
+
+import os
+import geopandas as gpd
+import rasterio
+from rasterio.mask import mask
+from shapely.geometry import mapping
+from shapely.geometry import box
+
+# Input paths 
+raster_path = "Z:/EOCIS/Som_P/15 days/2023/20m/1_LAI/your_raster_file.tif"  # Replace with your file
+output_dir = "Z:/Som_P/WCC/clipped_raster/2023/20m/NF/LAI"
+
+# Ensure output directory exists
+os.makedirs(output_dir, exist_ok=True)
+
+# Define bounding box (forest area) - EPSG:4326
+bbox = [-1.9573, 50.7057, -1.3013, 51.0094]
+
+# Create GeoDataFrame and reproject
+gdf = gpd.GeoDataFrame({'geometry': [box(*bbox)]}, crs="EPSG:4326")
+gdf_27700 = gdf.to_crs(epsg=27700)
+geom = gdf_27700.geometry.iloc[0]
+
+# Create output path
+output_filename = os.path.basename(raster_path)
+output_path = os.path.join(output_dir, f"NewFor_clipped_{output_filename}")
+
+# Open and process the raster
+src = rasterio.open(raster_path) 
+out_image, out_transform = mask(src, [mapping(geom)], crop=True)
+
+# Check for empty mask
+if out_image.size == 0:
+    print(f"No data in clipped area for {raster_path}")
+else:
+    out_meta = src.meta.copy()
+    out_meta.update({
+        "driver": "GTiff",
+        "height": out_image.shape[1],
+        "width": out_image.shape[2],
+        "transform": out_transform,
+        "crs": src.crs,
+        "nodata": src.nodata
+    })
+
+    dest = rasterio.open(output_path, "w", **out_meta) 
+    dest.write(out_image)
+    dest.close() 
+    print(f"Clipped: {output_path}")
+
+src.close() 
