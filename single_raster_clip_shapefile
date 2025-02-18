@@ -1,0 +1,79 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Tue Feb 18 13:49:15 2025
+
+@author: sp1v23
+"""
+
+import os
+import geopandas as gpd
+import rasterio
+from rasterio.mask import mask
+from shapely.geometry import mapping
+import numpy as np
+
+# Input paths (update as needed)
+raster_path = "Z:/EOCIS/Omar/15 days/2023/100m/4_synoptic_filled_lai/EOCIS-LAI-L1-CHUK-LEAF-Synoptic-100m-20230101-20230115-V1.tif"  # Single raster file
+output_dir = "Z:/Som_P/WCC/clipped_raster/2023/20m/NF/test"  # Or a more appropriate output directory for 100m resolution
+shapefile_location = "Z:/Som_P/WCC/EOCIS_shapefiles/new_forest.shp"
+
+# Ensure output directory exists
+os.makedirs(output_dir, exist_ok=True)
+
+def print_raster_info(raster_path):
+    src = rasterio.open(raster_path) 
+    print(f"CRS: {src.crs}")
+    print(f"Dimensions: {src.width} x {src.height}")
+    print(f"Bands: {src.count}")
+    print(f"Data type: {src.dtypes[0]}")  
+    print(f"Bounds: {src.bounds}")
+    print(f"Resolution: {src.res}")
+    print(f"NoData: {src.nodata}")
+    src.close()  
+    
+print_raster_info(raster_path)
+
+new_forest_gdf = gpd.read_file(shapefile_location)
+
+# Check the CRS (Coordinate Reference System)
+print(f"Original CRS: {new_forest_gdf.crs}")
+
+# Get the geometry from the shapefile (assuming it's a single feature)
+geom = new_forest_gdf.geometry.iloc[0]
+
+# Create output path (adjust as needed for a single file)
+output_filename = os.path.basename(raster_path)
+output_path = os.path.join(output_dir, f"NewFor_clipped_{output_filename}")
+
+
+try:
+    with rasterio.open(raster_path) as src:
+        # Use the shapefile's geometry for masking. Reproject if needed.
+        if src.crs != new_forest_gdf.crs:
+            geom_reprojected = new_forest_gdf.to_crs(src.crs).geometry.iloc[0]  # Reproject if CRS don't match
+            out_image, out_transform = mask(src, [mapping(geom_reprojected)], crop=True)
+        else:
+            out_image, out_transform = mask(src, [mapping(geom)], crop=True)
+
+        # If the mask results in an empty array, skip it
+        if out_image.size == 0:
+            print(f"Skipping: No data in clipped area")
+        else:
+            out_image[out_image == 0] = src.nodata  # Replace 0 values with NoData
+
+            out_meta = src.meta.copy()
+            out_meta.update({
+                "driver": "GTiff",
+                "height": out_image.shape[1],
+                "width": out_image.shape[2],
+                "transform": out_transform,
+                "crs": src.crs,
+                "nodata": src.nodata
+            })
+
+            with rasterio.open(output_path, "w", **out_meta) as dest:
+                dest.write(out_image)
+            print(f"Clipped: {output_path}")
+
+except Exception as e:
+    print(f"Failed to clip: {e}")
