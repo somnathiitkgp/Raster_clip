@@ -1,0 +1,53 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Thu Feb 13 11:01:34 2025
+
+@author: sp1v23
+"""
+
+### Only clip the dataset for all the files inside the folder ###
+
+import os
+import geopandas as gpd
+import rasterio
+from rasterio.mask import mask
+from shapely.geometry import mapping
+
+# Input paths (update as needed)
+shapefile_path = "Z:/Som_P/WCC/EOCIS_shapefiles/2023_07_18_AHL2.shp"
+raster_dir = "Z:/EOCIS/Omar/15 days/2023/20m/1_LAI"
+output_dir = "Z:/Som_P/WCC/clipped_raster/2023/NF2/LAI"  
+
+# Ensure output directory exists
+os.makedirs(os.path.dirname(output_dir), exist_ok=True)
+
+buffer_distance = 10  # Adjust buffer size in meters
+
+# Process shapefile once (reproject + buffer)
+gdf = gpd.read_file(shapefile_path).to_crs(epsg=27700)
+gdf['geometry'] = gdf.geometry.buffer(buffer_distance)
+combined_geom = gdf.geometry.unary_union
+
+# Process all .geotif files in the raster directory
+os.makedirs(output_dir, exist_ok=True)
+for raster_file in os.listdir(raster_dir):
+    if raster_file.endswith(".tif"):
+        raster_path = os.path.join(raster_dir, raster_file)
+        output_path = os.path.join(output_dir, f"NF1_clipped_{raster_file}")
+        
+        try:
+            with rasterio.open(raster_path) as src:
+                out_image, out_transform = mask(src, [mapping(combined_geom)], crop=True)
+                out_meta = src.meta.copy()
+                out_meta.update({
+                    "height": out_image.shape[1],
+                    "width": out_image.shape[2],
+                    "transform": out_transform
+                })
+                
+                with rasterio.open(output_path, "w", **out_meta) as dest:
+                    dest.write(out_image)
+                print(f"Clipped: {output_path}")
+        
+        except Exception as e:
+            print(f"Failed to clip {raster_file}: {e}")
