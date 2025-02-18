@@ -1,0 +1,52 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Thu Feb 13 11:01:34 2025
+
+@author: sp1v23
+"""
+
+### Only clip the dataset for a single raster ###
+
+import os
+import geopandas as gpd
+import rasterio
+from rasterio.mask import mask
+from shapely.geometry import mapping
+
+# Input paths (update as needed)
+shapefile_path = "Z:/Som_P/WCC/EOCIS_shapefiles/2023_07_13_NF1.shp"
+raster_path = "Z:/EOCIS/Omar/15 days/2018/20m/1_LAI/EOCIS-LAI-L1-CHUK-LEAF-20m-20180401-20180415-V1.tif"
+output_dir = "Z:/Som_P/WCC/clipped_raster/NF1/LAI"  # Specify your output directory
+
+# Ensure output directory exists
+os.makedirs(os.path.dirname(output_dir), exist_ok=True)
+
+buffer_distance = 10  # Adjust buffer size in meters (e.g., 10m around each point)
+
+# Read shapefile and reproject to match raster CRS (EPSG:27700)
+gdf = gpd.read_file(shapefile_path).to_crs(epsg=27700)
+
+# Convert points to polygons by buffering
+gdf['geometry'] = gdf.geometry.buffer(buffer_distance)
+combined_geom = gdf.geometry.unary_union  # Merge all polygons
+
+# Clip the raster
+with rasterio.open(raster_path) as src:
+    try:
+        out_image, out_transform = mask(src, [mapping(combined_geom)], crop=True)
+        out_meta = src.meta.copy()
+        out_meta.update({
+            "height": out_image.shape[1],
+            "width": out_image.shape[2],
+            "transform": out_transform
+        })
+        
+        # Save output
+        os.makedirs(output_dir, exist_ok=True)
+        output_path = os.path.join(output_dir, "clipped_" + os.path.basename(raster_path))
+        with rasterio.open(output_path, "w", **out_meta) as dest:
+            dest.write(out_image)
+        print(f"Clipped raster saved to: {output_path}")
+    
+    except ValueError as e:
+        print(f"Error: {e}. The shapes may not overlap the raster.")
