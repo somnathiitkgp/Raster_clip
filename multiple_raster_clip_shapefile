@@ -1,0 +1,79 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Tue Feb 18 15:20:00 2025
+
+@author: sp1v23
+"""
+
+import os
+import geopandas as gpd
+import rasterio
+from rasterio.mask import mask
+from shapely.geometry import mapping
+import numpy as np
+
+# Input paths
+raster_dir = "Z:/EOCIS/Omar/15 days/2023/20m/1_LAI"
+output_dir = "Z:/Som_P/WCC/clipped_raster/2023/20m/NF/LAI"
+shapefile_location = "Z:/Som_P/WCC/EOCIS_shapefiles/new_forest.shp"
+
+# Ensure output directories exist
+os.makedirs(output_dir, exist_ok=True)
+
+# Read the shapefile
+new_forest_gdf = gpd.read_file(shapefile_location)
+
+# Get the geometry from the shapefile (assuming it's a single feature)
+geom = new_forest_gdf.geometry.iloc[0]
+
+# Process all .tif files in the raster directory
+for raster_file in os.listdir(raster_dir):
+    if raster_file.endswith(".tif"):
+        raster_path = os.path.join(raster_dir, raster_file)
+        output_path = os.path.join(output_dir, f"NewFor_clipped_{raster_file}")
+
+        try:
+            with rasterio.open(raster_path) as src:
+                # Use the shapefile's geometry for masking. Reproject if needed.
+                if src.crs != new_forest_gdf.crs:
+                    geom_reprojected = new_forest_gdf.to_crs(src.crs).geometry.iloc[0]  # Reproject if CRS don't match
+                    out_image, out_transform = mask(src, [mapping(geom_reprojected)], crop=True)
+                else:
+                    out_image, out_transform = mask(src, [mapping(geom)], crop=True)
+
+                # If the mask results in an empty array, skip it
+                if out_image.size == 0:
+                    print(f"Skipping {raster_file}: No data in clipped area")
+                    continue
+
+                # Determine an appropriate NoData value based on raster data type
+                dtype = src.dtypes[0]  # Get data type
+                if src.nodata is not None:
+                    nodata_value = src.nodata  # Use existing NoData value
+                elif dtype.startswith("uint8"):
+                    nodata_value = 255  # Use 255 for uint8
+                elif dtype.startswith("int16") or dtype.startswith("float"):
+                    nodata_value = -9999  # Use -9999 for signed int and float
+                else:
+                    nodata_value = 0  # Default fallback
+
+                # Replace 0 values with NoData
+                out_image = np.where(out_image == 0, nodata_value, out_image).astype(src.dtypes[0])
+
+                # Update metadata
+                out_meta = src.meta.copy()
+                out_meta.update({
+                    "driver": "GTiff",
+                    "height": out_image.shape[1],
+                    "width": out_image.shape[2],
+                    "transform": out_transform,
+                    "crs": src.crs,
+                    "nodata": nodata_value  # Ensure NoData value is set correctly
+                })
+
+                with rasterio.open(output_path, "w", **out_meta) as dest:
+                    dest.write(out_image)
+                print(f"Clipped: {output_path}")
+
+        except Exception as e:
+            print(f"Failed to clip {raster_file}: {e}")
